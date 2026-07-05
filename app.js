@@ -3,7 +3,7 @@ const CONFIG = {
     // REPLACE THIS WITH YOUR DEPLOYED APPS SCRIPT URL
     API_BASE_URL: 'https://script.google.com/macros/s/AKfycbyvmdibTM4Y4k5iLnVM_OeerAks99Rfz0lZD2Eq_QXHS8LfPSXglFjFmDs0gtUzkm0eiQ/exec',
     CITY_NAME: 'Your City Name',
-    WHATSAPP_COUNTRY_CODE: '91' // India
+    WHATSAPP_COUNTRY_CODE: '91'
 };
 
 // State Management
@@ -14,7 +14,8 @@ const state = {
     categories: [],
     businesses: [],
     currentCategory: null,
-    currentBusiness: null
+    currentBusiness: null,
+    authStep: 'phone' // 'phone' or 'otp'
 };
 
 // Initialize
@@ -90,6 +91,7 @@ function renderScreen(screenName, data = {}) {
     switch(screenName) {
         case 'auth':
             container.innerHTML = getAuthScreen();
+            setupAuthListeners();
             break;
         case 'roleSelection':
             container.innerHTML = getRoleSelectionScreen();
@@ -115,6 +117,7 @@ function renderScreen(screenName, data = {}) {
             break;
         default:
             container.innerHTML = getAuthScreen();
+            setupAuthListeners();
     }
 }
 
@@ -131,7 +134,9 @@ function getAuthScreen() {
                 
                 <div class="bg-white rounded-2xl shadow-xl p-6 slide-up">
                     <h2 class="text-xl font-semibold text-gray-800 mb-4">Welcome Back</h2>
-                    <div class="space-y-4">
+                    
+                    <!-- Phone Input Section -->
+                    <div id="phoneSection" class="space-y-4">
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-2">Mobile Number</label>
                             <div class="flex">
@@ -143,16 +148,34 @@ function getAuthScreen() {
                                     placeholder="Enter 10-digit number" maxlength="10" pattern="[0-9]{10}">
                             </div>
                         </div>
-                        <div id="otpSection" class="hidden">
-                            <label class="block text-sm font-medium text-gray-700 mb-2">Enter OTP</label>
-                            <input type="text" id="otpInput" 
-                                class="block w-full px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                                placeholder="Enter 6-digit OTP" maxlength="6" pattern="[0-9]{6}">
-                            <p class="text-xs text-gray-500 mt-1">Demo OTP: 123456 (Check console)</p>
-                        </div>
-                        <button id="authButton" onclick="handleAuth()" 
+                        <button id="sendOtpBtn" 
                             class="w-full bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition duration-200">
                             Send OTP
+                        </button>
+                    </div>
+                    
+                    <!-- OTP Input Section (Initially Hidden) -->
+                    <div id="otpSection" class="space-y-4 hidden">
+                        <div class="text-center mb-4">
+                            <div class="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-2">
+                                <i class="fas fa-check-circle text-green-600 text-2xl"></i>
+                            </div>
+                            <p class="text-sm text-gray-600">OTP sent to +91 <span id="displayPhone"></span></p>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">Enter OTP</label>
+                            <input type="text" id="otpInput" 
+                                class="block w-full px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-center text-2xl tracking-widest"
+                                placeholder="000000" maxlength="6" pattern="[0-9]{6}">
+                            <p class="text-xs text-gray-500 mt-2 text-center">Demo OTP: Check browser console (F12)</p>
+                        </div>
+                        <button id="verifyOtpBtn" 
+                            class="w-full bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition duration-200">
+                            Verify & Login
+                        </button>
+                        <button id="changeNumberBtn" 
+                            class="w-full text-blue-600 py-2 text-sm hover:text-blue-800">
+                            ← Change Number
                         </button>
                     </div>
                 </div>
@@ -161,64 +184,130 @@ function getAuthScreen() {
     `;
 }
 
-async function handleAuth() {
-    const phone = document.getElementById('phoneInput').value;
-    const authButton = document.getElementById('authButton');
-    const otpSection = document.getElementById('otpSection');
+function setupAuthListeners() {
+    // Send OTP Button
+    const sendOtpBtn = document.getElementById('sendOtpBtn');
+    if (sendOtpBtn) {
+        sendOtpBtn.addEventListener('click', handleSendOTP);
+    }
     
-    if (!phone || phone.length !== 10) {
+    // Verify OTP Button
+    const verifyOtpBtn = document.getElementById('verifyOtpBtn');
+    if (verifyOtpBtn) {
+        verifyOtpBtn.addEventListener('click', handleVerifyOTP);
+    }
+    
+    // Change Number Button
+    const changeNumberBtn = document.getElementById('changeNumberBtn');
+    if (changeNumberBtn) {
+        changeNumberBtn.addEventListener('click', resetToPhoneInput);
+    }
+    
+    // Allow Enter key on OTP input
+    const otpInput = document.getElementById('otpInput');
+    if (otpInput) {
+        otpInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                handleVerifyOTP();
+            }
+        });
+    }
+}
+
+async function handleSendOTP() {
+    const phoneInput = document.getElementById('phoneInput');
+    const phone = phoneInput.value.trim();
+    
+    if (!phone || phone.length !== 10 || !/^\d{10}$/.test(phone)) {
         alert('Please enter a valid 10-digit mobile number');
+        phoneInput.focus();
         return;
     }
     
-    if (authButton.textContent === 'Send OTP') {
-        showLoading();
-        const result = await apiPost({
-            action: 'sendOTP',
-            phone: phone
-        });
-        hideLoading();
+    // Disable button and show loading
+    const sendOtpBtn = document.getElementById('sendOtpBtn');
+    sendOtpBtn.disabled = true;
+    sendOtpBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Sending...';
+    
+    showLoading();
+    const result = await apiPost({
+        action: 'sendOTP',
+        phone: phone
+    });
+    hideLoading();
+    
+    if (result.success) {
+        console.log('📱 Demo OTP:', result.debug?.otp || '123456');
+        console.log('ℹ️ Check this console for OTP during testing');
         
-        if (result.success) {
-            console.log('Demo OTP:', result.debug?.otp || '123456');
-            otpSection.classList.remove('hidden');
-            authButton.textContent = 'Verify & Login';
-            document.getElementById('otpInput').focus();
-        } else {
-            alert('Failed to send OTP. Please try again.');
-        }
+        // Show OTP section
+        document.getElementById('phoneSection').classList.add('hidden');
+        document.getElementById('otpSection').classList.remove('hidden');
+        document.getElementById('displayPhone').textContent = phone;
+        document.getElementById('otpInput').focus();
+        
+        // Store phone in state
+        state.tempPhone = phone;
     } else {
-        const otp = document.getElementById('otpInput').value;
-        if (!otp || otp.length !== 6) {
-            alert('Please enter valid OTP');
-            return;
-        }
-        
-        showLoading();
-        const result = await apiPost({
-            action: 'verifyOTP',
+        alert('Failed to send OTP. Please try again.');
+        sendOtpBtn.disabled = false;
+        sendOtpBtn.textContent = 'Send OTP';
+    }
+}
+
+async function handleVerifyOTP() {
+    const otpInput = document.getElementById('otpInput');
+    const otp = otpInput.value.trim();
+    const phone = state.tempPhone;
+    
+    if (!otp || otp.length !== 6 || !/^\d{6}$/.test(otp)) {
+        alert('Please enter a valid 6-digit OTP');
+        otpInput.focus();
+        return;
+    }
+    
+    // Disable button and show loading
+    const verifyOtpBtn = document.getElementById('verifyOtpBtn');
+    verifyOtpBtn.disabled = true;
+    verifyOtpBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Verifying...';
+    
+    showLoading();
+    const result = await apiPost({
+        action: 'verifyOTP',
+        phone: phone,
+        otp: otp
+    });
+    
+    if (result.success) {
+        // Register user if not exists
+        await apiPost({
+            action: 'registerUser',
             phone: phone,
-            otp: otp
+            name: 'User',
+            role: 'citizen'
         });
         
-        if (result.success) {
-            // Check if user exists
-            const userResult = await apiCall({
-                action: 'registerUser',
-                phone: phone,
-                name: 'User',
-                role: 'citizen'
-            });
-            
-            state.currentUser = { phone, name: 'User' };
-            localStorage.setItem('citybiz_user', JSON.stringify(state.currentUser));
-            hideLoading();
-            renderScreen('roleSelection');
-        } else {
-            hideLoading();
-            alert('Invalid OTP. Please try again. Demo OTP: 123456');
-        }
+        state.currentUser = { phone, name: 'User' };
+        localStorage.setItem('citybiz_user', JSON.stringify(state.currentUser));
+        hideLoading();
+        renderScreen('roleSelection');
+    } else {
+        hideLoading();
+        verifyOtpBtn.disabled = false;
+        verifyOtpBtn.textContent = 'Verify & Login';
+        alert('Invalid OTP. Please try again. (Demo OTP in console)');
+        otpInput.value = '';
+        otpInput.focus();
     }
+}
+
+function resetToPhoneInput() {
+    document.getElementById('otpSection').classList.add('hidden');
+    document.getElementById('phoneSection').classList.remove('hidden');
+    document.getElementById('sendOtpBtn').disabled = false;
+    document.getElementById('sendOtpBtn').textContent = 'Send OTP';
+    document.getElementById('otpInput').value = '';
+    state.tempPhone = null;
 }
 
 // Role Selection Screen
@@ -285,14 +374,14 @@ function getBusinessRegistrationScreen() {
                 <form id="businessForm" onsubmit="submitBusiness(event)" class="space-y-4">
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Business Name *</label>
-                        <input type="text" required 
+                        <input type="text" name="businessName" required 
                             class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                             placeholder="Enter business name">
                     </div>
                     
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Category *</label>
-                        <select required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        <select name="category" required class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
                             <option value="">Select Category</option>
                             <option value="Clothing">Clothing</option>
                             <option value="Hospital">Hospital</option>
@@ -309,7 +398,7 @@ function getBusinessRegistrationScreen() {
                     
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Sub Category</label>
-                        <select class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        <select name="subCategory" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
                             <option value="">Select Sub Category</option>
                             <option value="Wholesale">Wholesale</option>
                             <option value="Retail">Retail</option>
@@ -321,7 +410,7 @@ function getBusinessRegistrationScreen() {
                         <label class="block text-sm font-medium text-gray-700 mb-1">WhatsApp Number *</label>
                         <div class="flex">
                             <span class="inline-flex items-center px-3 bg-gray-100 border border-r-0 border-gray-300 rounded-l-lg text-gray-600">+91</span>
-                            <input type="tel" required 
+                            <input type="tel" name="whatsappNumber" required 
                                 class="flex-1 px-3 py-2 border border-gray-300 rounded-r-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                                 placeholder="Enter WhatsApp number" maxlength="10">
                         </div>
@@ -329,21 +418,21 @@ function getBusinessRegistrationScreen() {
                     
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Address *</label>
-                        <textarea required rows="3" 
+                        <textarea name="address" required rows="3" 
                             class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                             placeholder="Enter complete address"></textarea>
                     </div>
                     
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Logo URL (Optional)</label>
-                        <input type="url" 
+                        <input type="url" name="logoLink" 
                             class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                             placeholder="Google Drive link for logo">
                     </div>
                     
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Photo URLs (Optional)</label>
-                        <input type="text" 
+                        <input type="text" name="photoLinks" 
                             class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                             placeholder="Comma-separated Google Drive links">
                     </div>
@@ -351,10 +440,10 @@ function getBusinessRegistrationScreen() {
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Map Location (Optional)</label>
                         <div class="flex space-x-2">
-                            <input type="text" id="latitude" 
+                            <input type="text" id="latitude" name="latitude" 
                                 class="flex-1 px-3 py-2 border border-gray-300 rounded-lg"
                                 placeholder="Latitude">
-                            <input type="text" id="longitude" 
+                            <input type="text" id="longitude" name="longitude" 
                                 class="flex-1 px-3 py-2 border border-gray-300 rounded-lg"
                                 placeholder="Longitude">
                         </div>
@@ -383,6 +472,8 @@ function getCurrentLocation() {
             },
             () => alert('Unable to get location. Please enter manually.')
         );
+    } else {
+        alert('Geolocation is not supported by your browser');
     }
 }
 
@@ -394,26 +485,33 @@ async function submitBusiness(event) {
     const businessData = {
         action: 'registerBusiness',
         ownerPhone: state.currentUser.phone,
-        businessName: form.querySelectorAll('input')[0].value,
-        category: form.querySelector('select').value,
-        subCategory: form.querySelectorAll('select')[1].value,
-        whatsappNumber: form.querySelectorAll('input[type="tel"]')[1].value,
-        address: form.querySelector('textarea').value,
-        logoLink: form.querySelectorAll('input[type="url"]')[0].value,
-        photoLinks: form.querySelectorAll('input[type="text"]')[2].value,
-        latitude: document.getElementById('latitude').value,
-        longitude: document.getElementById('longitude').value
+        businessName: formData.get('businessName'),
+        category: formData.get('category'),
+        subCategory: formData.get('subCategory') || 'Retail',
+        whatsappNumber: formData.get('whatsappNumber'),
+        address: formData.get('address'),
+        logoLink: formData.get('logoLink') || '',
+        photoLinks: formData.get('photoLinks') || '',
+        latitude: formData.get('latitude') || '',
+        longitude: formData.get('longitude') || ''
     };
+    
+    if (!businessData.category) {
+        alert('Please select a category');
+        return;
+    }
     
     showLoading();
     const result = await apiPost(businessData);
     hideLoading();
     
     if (result.success) {
-        alert('Business registered successfully! It will be visible after approval.');
+        alert('✅ Business registered successfully! It will be visible after approval.');
+        state.currentUser.role = 'business';
+        localStorage.setItem('citybiz_user', JSON.stringify(state.currentUser));
         renderScreen('businessDashboard');
     } else {
-        alert('Failed to register business. Please try again.');
+        alert('❌ Failed to register business. Error: ' + (result.error || 'Unknown error'));
     }
 }
 
@@ -449,7 +547,10 @@ function getCitizenHomeScreen() {
                 <div id="categoriesGrid" class="grid grid-cols-3 gap-3">
                     <!-- Categories will be loaded here -->
                     <div class="col-span-3 text-center py-8">
-                        <div class="skeleton h-32 rounded-xl mb-3"></div>
+                        <div class="animate-pulse">
+                            <div class="skeleton h-32 rounded-xl mb-3"></div>
+                            <p class="text-gray-500">Loading categories...</p>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -462,8 +563,19 @@ async function loadCategories() {
     const result = await apiCall({ action: 'getCategories' });
     hideLoading();
     
-    if (result.success) {
+    if (result.success && result.categories) {
         state.categories = result.categories;
+        renderCategories();
+    } else {
+        // Default categories if API fails
+        state.categories = [
+            { name: 'Clothing', icon: '👕' },
+            { name: 'Hospital', icon: '🏥' },
+            { name: 'Cafe', icon: '☕' },
+            { name: 'Restaurant', icon: '🍽️' },
+            { name: 'Grocery', icon: '🛒' },
+            { name: 'Pharmacy', icon: '💊' }
+        ];
         renderCategories();
     }
 }
@@ -474,7 +586,7 @@ function renderCategories() {
     
     grid.innerHTML = state.categories.map(cat => `
         <button onclick="openCategory('${cat.name}')" 
-            class="bg-white p-4 rounded-xl shadow-md hover:shadow-lg transition duration-200 text-center">
+            class="bg-white p-4 rounded-xl shadow-md hover:shadow-lg transition duration-200 text-center active:scale-95 transform">
             <div class="text-3xl mb-2">${cat.icon}</div>
             <div class="text-xs font-medium text-gray-800">${cat.name}</div>
         </button>
@@ -492,26 +604,26 @@ async function loadUrgentServices() {
 function renderUrgentServices() {
     const section = document.getElementById('urgentSection');
     const content = document.getElementById('urgentContent');
-    if (!section || !content) return;
+    if (!section || !content || !state.urgentServices) return;
     
     section.classList.remove('hidden');
     content.innerHTML = `
         <h3 class="font-semibold text-red-800 mb-2">🚨 Emergency Services</h3>
         <div class="grid grid-cols-2 gap-2">
-            ${state.urgentServices.emergencyNumbers.map(service => `
+            ${state.urgentServices.emergencyNumbers?.map(service => `
                 <a href="tel:${service.number}" 
                     class="bg-white p-2 rounded-lg text-center hover:bg-red-100">
                     <div class="text-lg">${service.icon}</div>
                     <div class="text-xs font-medium">${service.name}</div>
                     <div class="text-sm font-bold text-red-600">${service.number}</div>
                 </a>
-            `).join('')}
+            `).join('') || ''}
         </div>
-        ${state.urgentServices.medicalStores.length > 0 ? `
+        ${state.urgentServices.medicalStores?.length > 0 ? `
             <div class="mt-3">
                 <h4 class="text-sm font-semibold text-red-800 mb-1">24/7 Medical Stores</h4>
                 ${state.urgentServices.medicalStores.slice(0, 3).map(store => `
-                    <a href="https://wa.me/${CONFIG.WHATSAPP_COUNTRY_CODE}${store.phone}" 
+                    <a href="https://wa.me/${CONFIG.WHATSAPP_COUNTRY_CODE}${store.phone}" target="_blank"
                         class="flex items-center justify-between bg-white p-2 rounded-lg mb-1 hover:bg-red-100">
                         <span class="text-sm">${store.name}</span>
                         <span class="text-green-600"><i class="fab fa-whatsapp"></i> Chat</span>
@@ -543,7 +655,7 @@ function getCategoryListingScreen(category) {
             <div class="p-4">
                 <div class="flex space-x-2 mb-4">
                     <button onclick="filterBusinesses('Wholesale')" 
-                        class="flex-1 py-2 px-4 bg-white border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 active" id="tab-wholesale">
+                        class="flex-1 py-2 px-4 bg-blue-50 border border-blue-500 text-blue-600 rounded-lg text-sm font-medium" id="tab-wholesale">
                         Wholesale
                     </button>
                     <button onclick="filterBusinesses('Retail')" 
@@ -553,9 +665,11 @@ function getCategoryListingScreen(category) {
                 </div>
                 
                 <div id="businessList" class="space-y-3">
-                    <div class="skeleton h-24 rounded-xl"></div>
-                    <div class="skeleton h-24 rounded-xl"></div>
-                    <div class="skeleton h-24 rounded-xl"></div>
+                    <div class="text-center py-8">
+                        <div class="skeleton h-24 rounded-xl mb-3"></div>
+                        <div class="skeleton h-24 rounded-xl mb-3"></div>
+                        <p class="text-gray-500">Loading businesses...</p>
+                    </div>
                 </div>
             </div>
         </div>
@@ -564,27 +678,18 @@ function getCategoryListingScreen(category) {
 
 async function loadBusinessesByCategory(category) {
     state.currentCategory = category;
-    showLoading();
-    const result = await apiCall({
-        action: 'getBusinesses',
-        category: category,
-        subCategory: 'Wholesale' // Default tab
-    });
-    hideLoading();
-    
-    if (result.success) {
-        state.businesses = result.businesses;
-        renderBusinessList();
-    }
+    await loadBusinessesBySubCategory('Wholesale');
 }
 
 function filterBusinesses(subCategory) {
-    // Update active tab
+    // Update active tab styling
     document.querySelectorAll('[id^="tab-"]').forEach(tab => {
         tab.classList.remove('bg-blue-50', 'border-blue-500', 'text-blue-600');
+        tab.classList.add('bg-white', 'border-gray-300', 'text-gray-700');
     });
     const activeTab = document.getElementById(`tab-${subCategory.toLowerCase()}`);
     if (activeTab) {
+        activeTab.classList.remove('bg-white', 'border-gray-300', 'text-gray-700');
         activeTab.classList.add('bg-blue-50', 'border-blue-500', 'text-blue-600');
     }
     
@@ -603,6 +708,9 @@ async function loadBusinessesBySubCategory(subCategory) {
     if (result.success) {
         state.businesses = result.businesses;
         renderBusinessList();
+    } else {
+        state.businesses = [];
+        renderBusinessList();
     }
 }
 
@@ -610,11 +718,12 @@ function renderBusinessList() {
     const list = document.getElementById('businessList');
     if (!list) return;
     
-    if (state.businesses.length === 0) {
+    if (!state.businesses || state.businesses.length === 0) {
         list.innerHTML = `
             <div class="text-center py-12">
                 <div class="text-6xl mb-4">🏪</div>
                 <p class="text-gray-500">No businesses found in this category</p>
+                <p class="text-sm text-gray-400 mt-2">Be the first one to register!</p>
             </div>
         `;
         return;
@@ -622,16 +731,16 @@ function renderBusinessList() {
     
     list.innerHTML = state.businesses.map(business => `
         <div onclick="openBusinessDetail('${business.businessId}')" 
-            class="bg-white p-4 rounded-xl shadow-md hover:shadow-lg transition duration-200 cursor-pointer">
+            class="bg-white p-4 rounded-xl shadow-md hover:shadow-lg transition duration-200 cursor-pointer active:scale-98 transform">
             <div class="flex items-start space-x-3">
-                <div class="w-16 h-16 bg-gray-100 rounded-lg flex items-center justify-center text-2xl flex-shrink-0">
+                <div class="w-16 h-16 bg-gray-100 rounded-lg flex items-center justify-center text-2xl flex-shrink-0 overflow-hidden">
                     ${business.logoLink ? 
-                        `<img src="${business.logoLink}" alt="${business.businessName}" class="w-full h-full object-cover rounded-lg">` : 
+                        `<img src="${business.logoLink}" alt="${business.businessName}" class="w-full h-full object-cover rounded-lg" onerror="this.style.display='none'; this.parentElement.innerHTML='🏪'">` : 
                         '🏪'}
                 </div>
                 <div class="flex-1 min-w-0">
                     <h3 class="font-semibold text-gray-800 truncate">${business.businessName}</h3>
-                    <p class="text-sm text-gray-500 truncate">${business.address}</p>
+                    <p class="text-sm text-gray-500 truncate">📍 ${business.address}</p>
                     <div class="flex items-center mt-1">
                         <span class="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full">${business.category}</span>
                         <span class="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full ml-1">${business.subCategory}</span>
@@ -657,7 +766,7 @@ function getBusinessDetailScreen() {
                 <h1 class="text-xl font-semibold text-gray-800">Business Details</h1>
             </div>
             
-            <div id="businessDetailContent">
+            <div id="businessDetailContent" class="animate-pulse">
                 <div class="skeleton h-64"></div>
             </div>
         </div>
@@ -675,6 +784,14 @@ async function loadBusinessDetail(businessId) {
     if (result.success) {
         state.currentBusiness = result.business;
         renderBusinessDetail();
+    } else {
+        document.getElementById('businessDetailContent').innerHTML = `
+            <div class="text-center py-12">
+                <div class="text-6xl mb-4">😕</div>
+                <p class="text-gray-500">Business not found</p>
+                <button onclick="history.back()" class="mt-4 text-blue-600">Go back</button>
+            </div>
+        `;
     }
 }
 
@@ -690,7 +807,7 @@ function renderBusinessDetail() {
             <div class="relative">
                 <div class="h-48 bg-gradient-to-br from-blue-400 to-indigo-500 flex items-center justify-center">
                     ${business.logoLink ? 
-                        `<img src="${business.logoLink}" alt="${business.businessName}" class="w-24 h-24 object-cover rounded-full border-4 border-white shadow-lg">` :
+                        `<img src="${business.logoLink}" alt="${business.businessName}" class="w-24 h-24 object-cover rounded-full border-4 border-white shadow-lg" onerror="this.style.display='none'; this.parentElement.innerHTML='<div class=\\'text-6xl\\'>🏪</div>'">` :
                         `<div class="text-6xl">🏪</div>`}
                 </div>
                 <div class="p-4 text-center">
@@ -720,11 +837,11 @@ function renderBusinessDetail() {
                 
                 <!-- Action Buttons -->
                 <div class="grid grid-cols-2 gap-3 mb-4">
-                    <a href="https://wa.me/${CONFIG.WHATSAPP_COUNTRY_CODE}${business.whatsappNumber}" 
+                    <a href="https://wa.me/${CONFIG.WHATSAPP_COUNTRY_CODE}${business.whatsappNumber}" target="_blank"
                         class="bg-green-500 text-white py-3 rounded-lg text-center font-medium hover:bg-green-600 flex items-center justify-center">
                         <i class="fab fa-whatsapp mr-2 text-lg"></i> Chat on WhatsApp
                     </a>
-                    <a href="tel:${business.whatsappNumber}" 
+                    <a href="tel:+91${business.whatsappNumber}" 
                         class="bg-blue-500 text-white py-3 rounded-lg text-center font-medium hover:bg-blue-600 flex items-center justify-center">
                         <i class="fas fa-phone mr-2"></i> Call Now
                     </a>
@@ -734,26 +851,10 @@ function renderBusinessDetail() {
                 ${business.photoLinks && business.photoLinks.length > 0 ? `
                     <div class="mb-4">
                         <h3 class="font-semibold text-gray-800 mb-3">📸 Photos</h3>
-                        <div class="grid grid-cols-3 gap-2">
+                        <div class="grid grid-cols-2 gap-2">
                             ${business.photoLinks.map(link => `
-                                <img src="${link}" alt="Business photo" class="w-full h-24 object-cover rounded-lg">
+                                <img src="${link}" alt="Business photo" class="w-full h-32 object-cover rounded-lg" onerror="this.src='https://via.placeholder.com/300x200?text=No+Image'">
                             `).join('')}
-                        </div>
-                    </div>
-                ` : ''}
-                
-                <!-- Map Placeholder -->
-                ${business.latitude && business.longitude ? `
-                    <div class="mb-4">
-                        <h3 class="font-semibold text-gray-800 mb-3">📍 Location</h3>
-                        <div class="bg-gray-200 h-48 rounded-lg flex items-center justify-center">
-                            <iframe 
-                                width="100%" 
-                                height="100%" 
-                                frameborder="0" 
-                                src="https://www.google.com/maps/embed/v1/place?key=YOUR_GOOGLE_MAPS_KEY&q=${business.latitude},${business.longitude}"
-                                class="rounded-lg">
-                            </iframe>
                         </div>
                     </div>
                 ` : ''}
@@ -809,6 +910,11 @@ function getBusinessDashboardScreen() {
                         <li>• Update your business hours in the description</li>
                     </ul>
                 </div>
+                
+                <button onclick="renderScreen('businessRegistration')" 
+                    class="w-full mt-4 bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700">
+                    Register Another Business
+                </button>
             </div>
         </div>
     `;
@@ -818,5 +924,7 @@ function logout() {
     localStorage.removeItem('citybiz_user');
     state.currentUser = null;
     state.userRole = null;
+    state.tempPhone = null;
+    state.authStep = 'phone';
     renderScreen('auth');
 }

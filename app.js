@@ -3,7 +3,7 @@
 
 const CONFIG = {
     // 🔴 PASTE YOUR ACTUAL APPS SCRIPT URL HERE
-    API_BASE_URL: 'https://script.google.com/macros/s/AKfycbyvmdibTM4Y4k5iLnVM_OeerAks99Rfz0lZD2Eq_QXHS8LfPSXglFjFmDs0gtUzkm0eiQ/exec',
+    API_BASE_URL: 'https://script.google.com/macros/s/AKfycby7wL0n-r_Fxht3WVtDPyN_wrY4Pf2ZttCMPa8BeJw_HKqN1B7PnfdPnDM_f-0jpgzX1Q/exec',
     CITY_NAME: 'Your City',
     COUNTRY_CODE: '91'
 };
